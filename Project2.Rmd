@@ -1,0 +1,197 @@
+
+---
+title: "Air Quality Analysis at RDU Airport (2018–2020)"
+author: "Shiya Ye"
+date: "November 2026"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE
+)
+
+library(tidyverse)
+
+source("functions.R")
+
+data_2018 <- clean_air_quality("data/AQ_2018.csv")
+data_2019 <- clean_air_quality("data/AQ_2019.csv")
+data_2020 <- clean_air_quality("data/AQ_2020.csv")
+
+air_quality <- bind_rows(
+  data_2018,
+  data_2019,
+  data_2020
+)
+```
+
+# Introduction
+
+This project explores daily air pollution measurements collected at the EPA monitoring station at RDU Airport from 2018 through April 2020. The analysis focuses on three pollutants: carbon monoxide (CO), fine particulate matter (PM2.5), and ozone (O3).
+
+# Data Cleaning
+
+I created an R function to clean the air quality data for each year. The function removes duplicate records, replaces negative concentrations with zero, and calculates average concentrations for days with multiple measurements. It also converts dates into the correct format and allows ozone concentrations to be reported in ppm or ppb.
+
+The cleaned datasets were combined into one dataset for the analysis.
+
+# Summary Tables
+
+The following tables show the minimum and maximum daily concentrations of each pollutant for each year.
+
+```{r tables}
+make_summary_table <- function(year) {
+
+  air_quality %>%
+    filter(format(Date, "%Y") == as.character(year)) %>%
+    summarise(
+      `CO (ppm)` = list(c(min(CO, na.rm = TRUE),
+                          max(CO, na.rm = TRUE))),
+      `PM2.5 (ug/m3)` = list(c(min(PM25, na.rm = TRUE),
+                               max(PM25, na.rm = TRUE))),
+      `O3 (ppm)` = list(c(min(O3, na.rm = TRUE),
+                          max(O3, na.rm = TRUE)))
+    ) %>%
+    pivot_longer(
+      everything(),
+      names_to = "Pollutant",
+      values_to = "Values"
+    ) %>%
+    mutate(
+      Minimum = sapply(Values, `[`, 1),
+      Maximum = sapply(Values, `[`, 2)
+    ) %>%
+    select(-Values) %>%
+    mutate(across(c(Minimum, Maximum), ~ sprintf("%.3f", .x)))
+}
+
+knitr::kable(
+  make_summary_table(2018),
+  caption = "2018 Daily Pollutant Concentrations"
+)
+
+knitr::kable(
+  make_summary_table(2019),
+  caption = "2019 Daily Pollutant Concentrations"
+)
+
+knitr::kable(
+  make_summary_table(2020),
+  caption = "2020 Daily Pollutant Concentrations (January–April)"
+)
+```
+
+# Plot 1: Monthly CO and O3 Concentrations
+
+```{r plot1, fig.width=7, fig.height=4.5, out.width="100%"}
+monthly_data <- air_quality %>%
+  mutate(Month = lubridate::month(Date)) %>%
+  select(Month, CO, O3) %>%
+  pivot_longer(
+    cols = c(CO, O3),
+    names_to = "Pollutant",
+    values_to = "Concentration"
+  ) %>%
+  group_by(Month, Pollutant) %>%
+  summarise(
+    Mean = mean(Concentration, na.rm = TRUE),
+    SD = sd(Concentration, na.rm = TRUE),
+    N = sum(!is.na(Concentration)),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Lower = Mean - 1.96 * SD / sqrt(N),
+    Upper = Mean + 1.96 * SD / sqrt(N)
+  )
+
+ggplot(
+  monthly_data,
+  aes(x = Month, y = Mean, color = Pollutant)
+) +
+  geom_point(size = 2.5) +
+  geom_errorbar(
+    aes(ymin = Lower, ymax = Upper),
+    width = 0.2
+  ) +
+  facet_wrap(~ Pollutant, scales = "free_y") +
+  scale_x_continuous(
+    breaks = 1:12,
+    labels = month.abb
+  ) +
+  scale_color_manual(
+    values = c("CO" = "#3B82A0", "O3" = "#D97757")
+  ) +
+  labs(
+    title = "Monthly Average CO and O3 Concentrations",
+    subtitle = "RDU Airport, 2018–2020",
+    x = "Month",
+    y = "Concentration (ppm)",
+    color = "Pollutant",
+    caption = "Error bars represent 95% confidence intervals."
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold"),
+    legend.position = "bottom"
+  )
+```
+
+CO and O3 are displayed in separate panels with different y-axis scales because their concentrations differ substantially. This makes the monthly patterns of both pollutants easier to compare.
+
+# Plot 2: Monthly PM2.5 Concentrations by Year
+
+```{r plot2, fig.width=7, fig.height=4.5, out.width="100%"}
+pm25_monthly <- air_quality %>%
+  mutate(
+    Year = factor(lubridate::year(Date)),
+    Month = lubridate::month(Date)
+  ) %>%
+  group_by(Year, Month) %>%
+  summarise(
+    Mean_PM25 = mean(PM25, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+ggplot(
+  pm25_monthly,
+  aes(x = Month, y = Mean_PM25, color = Year, group = Year)
+) +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 2.5) +
+  scale_x_continuous(
+    breaks = 1:12,
+    labels = month.abb
+  ) +
+  scale_color_manual(
+    values = c(
+      "2018" = "#3B82A0",
+      "2019" = "#D97757",
+      "2020" = "#7D70A8"
+    )
+  ) +
+  labs(
+    title = "Monthly Average PM2.5 Concentrations by Year",
+    subtitle = "RDU Airport, 2018–2020",
+    x = "Month",
+    y = expression("PM2.5 Concentration (" * mu * "g/m"^3 * ")"),
+    color = "Year"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold"),
+    legend.position = "bottom"
+  )
+```
+
+I used a line plot with points because it makes it easy to compare monthly PM2.5 trends across different years.
+
+# Interpretation
+
+CO concentrations were generally higher in winter and lower in summer, while O3 showed the opposite pattern, with higher concentrations in spring and summer. PM2.5 concentrations varied across years, with relatively high levels in late 2018 and noticeable fluctuations throughout 2019. Since the 2020 dataset only includes January through April, comparisons across all three years are limited to those months.
+
+# AI Use Statement
+
+I used ChatGPT to help write and debug R code, especially for data cleaning, summary tables, and visualizations. I checked the output by reviewing the cleaned data, checking for duplicate dates, and examining the tables and plots to make sure they matched the project requirements.
